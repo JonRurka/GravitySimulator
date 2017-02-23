@@ -1,0 +1,110 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel GravityComp
+
+struct IN {
+    float x;
+    float y;
+    float z;
+    float mass;
+    float volume;
+};
+
+StructuredBuffer<IN> dataIn;
+RWStructuredBuffer<float4> dataOut;
+int numAsteroids;
+float scale;
+
+float Distance(float3 a, float3 b) {
+    float x = a.x - b.x;
+    float y = a.y - b.y;
+    float z = a.z - b.z;
+    return abs(sqrt(x * x + y * y + z * z));
+}
+
+float GetRadius(float volume) {
+    return pow(abs((volume / 3.14159265359) * (3/(float)4)), 1/(float)3);
+}
+
+bool Overlaps(float3 p1, float3 p2, float r1, float r2) {
+    float ds = pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2) + pow(p1.z - p2.z, 2);
+    return abs(ds) <= pow(r1 + r2, 2);
+}
+
+int Exponent(float d) {
+    return (int)log10(abs(d));
+}
+
+float Mantissa(float d, int exp) {
+    return d / pow(10, exp);
+}
+
+float ToNormal(float m, int exp) {
+    return m * pow(10, exp);
+}
+
+[numthreads(256,1,1)]
+void GravityComp (uint3 id : SV_DispatchThreadID)
+{
+    uint ind = id.x;
+    float4 gravResult = float4(0, 0, 0, -1);
+    for (uint i = 0; i < (uint)numAsteroids; i++) {
+        if (ind == i)
+            continue;
+
+        // done in scientific notation to support large objects.
+
+        // distance
+        float distance = Distance(float3(dataIn[ind].x, dataIn[ind].y, dataIn[ind].z), float3(dataIn[i].x, dataIn[i].y, dataIn[i].z));
+        float ds = pow(distance, 2);
+        int dsE = Exponent(ds);
+        float dsM = Mantissa(ds, dsE);
+
+        // gravity constant
+        float g = 0.0000000000667408;
+        int gE = Exponent(g);
+        float gM = Mantissa(g, gE);
+
+        // mass 1
+        float m1 = dataIn[ind].mass;
+        int m1E = Exponent(m1);
+        float m1M = Mantissa(m1, m1E);
+
+        // mass 2
+        float m2 = dataIn[i].mass;
+        int m2E = Exponent(m2);
+        float m2M = Mantissa(m2, m2E);
+
+        // newtons
+        int newtE = gE + m1E + m2E - dsE;
+        float newtM = gM * m1M * m2M / dsM;
+         
+         // acceloration.
+         int accE = newtE - m1E;
+         float accM = newtM / m1M;
+         float acc = ToNormal(accM, accE);
+
+         float3 dir = -normalize(float3(dataIn[ind].x, dataIn[ind].y, dataIn[ind].z) - float3(dataIn[i].x, dataIn[i].y, dataIn[i].z));
+         float3 grav = dir.xyz * acc;
+         gravResult.xyz = gravResult.xyz + grav.xyz;
+         //gravResult.xy = float2(m2M, i);
+
+         float r1 = GetRadius(dataIn[ind].volume);
+         float r2 = GetRadius(dataIn[i].volume);
+         if (Overlaps(float3(dataIn[ind].x, dataIn[ind].y, dataIn[ind].z), float3(dataIn[i].x, dataIn[i].y, dataIn[i].z), r1 * scale, r2 * scale)){
+            gravResult.w = i;
+         }
+
+        //float G = 0.0000000000667408;
+        //float m1 = dataIn[ind].z;
+        //float m2 = dataIn[i].z;
+        //float newt = (G * m1 * m2) / (double)pow(distance, 2);
+        //float acc = newt / m1;
+        //float2 dir = -normalize(dataIn[ind].xy - dataIn[i].xy);
+        //float2 grav = dir.xy * acc;
+        //gravResult.xy = gravResult.xy + grav.xy;
+    }
+
+    dataOut[ind].xyzw = gravResult.xyzw;
+}
+
+
